@@ -77,6 +77,17 @@ and settings, under labels `sonnet-topup-<cell>`. Nothing registered is rerun or
 eight added are reported separately and together; the added ones are labelled as run after outcomes were seen. No
 wording of the extension changes in response to this batch.
 
+## Amendment 2 (2026-11-27, after reading the tool sessions; grader only, stored runs rescored)
+
+Observation. Reading the stored sessions showed a behaviour the scripted cases had not foreseen: a subject records
+the several things a user asked for as **one** entry ("Deliver three items: (a) …, (b) …, (c) …"), updates it turn
+by turn and completes it at the end. Its text matches the key of every stated objective, so the registered reading
+"every stated objective recorded by its turn" counted such sessions as fully recorded.
+
+Change. `gradeTools` reports `merged`: entries that carry several stated objectives or rules. The registered reading
+is unchanged and still printed; the tables add the line "of these, as one entry for several objectives". A scripted
+case covers it. No run was repeated.
+
 ## Exploratory batch (before registration; kept, labelled)
 
 Run first, with an earlier runner (`.local/cuckoo-ledger/pilot/` in the main checkout, not tracked): fable/high and
@@ -94,6 +105,183 @@ replies found three defects of the instrument, corrected here:
 
 Its numbers are exploratory and are reported beside the registered ones, not pooled with them.
 
+## Results (2026-11-27)
+
+Runner at `03619193` (registered batch) and `522ee57b` (top-up; the runner files are identical), extension at
+`6f31b542`, Pi 1.5.2. 144 sessions, all completed; none failed a request-shape check, none was answered by another
+model, and within each cell every run had the same system text and tool definitions (`node analyze.mjs` prints the
+hashes). Stored runs: `results/<label>.jsonl` (written by `export-results.mjs`: everything the grader reads, without
+the request payloads). The tables are the output of `summarize.mjs`. Sonnet's registered sessions and the eight added
+by amendment 1 are in separate columns.
+
+### checkpoint-visible (coding v2)
+
+| | fable/high | haiku/low | sonnet/medium (registered) | sonnet/medium (top-up) |
+|---|---|---|---|---|
+| Sessions (two inquiries each) | 6 | 6 | 4 | 8 |
+| Replies valid | 12 of 12 | 12 of 12 | 8 of 8 | 16 of 16 |
+| ID references naming the entry they were given to | 372 of 372 | 381 of 381 | 248 of 248 | 496 of 496 |
+| Entries restated as new | 0 | 0 | 0 | 0 |
+| Entries dropped that nothing closed | 0 | 0 | 0 | 0 |
+| Items the grader could not place | 0 | 0 | 0 | 0 |
+| Completed objective reported `Complete` at the first inquiry | 6 of 6 | 6 of 6 | 4 of 4 | 8 of 8 |
+| and left out at the second | 6 of 6 | 6 of 6 | 4 of 4 | 8 of 8 |
+| Cancelled objective left out (replies) | 12 of 12 | 12 of 12 | 8 of 8 | 16 of 16 |
+| New objective given `null` at the first inquiry | 6 of 6 | 6 of 6 | 4 of 4 | 8 of 8 |
+| and named by its new ID at the second | 6 of 6 | 6 of 6 | 4 of 4 | 8 of 8 |
+| Rule the user lifted (replies) | left out 12 | kept under its id, new meaning 6; left out 3; replaced by a new rule 3 | left out 8 | left out 16 |
+| Rules the user never gave | 0 | 0 | 0 | 0 |
+
+Under coding v1: fable/high: wrong 0, restated as new 0, lifted rule left out 12 · haiku/low: wrong 3, restated as new 3, lifted rule kept, old meaning 6; left out 6 · sonnet/medium (registered): wrong 0, restated as new 0, lifted rule left out 8 · sonnet/medium (top-up): wrong 0, restated as new 0, lifted rule left out 16
+
+### checkpoint-compacted (coding v2)
+
+| | fable/high | haiku/low | sonnet/medium (registered) | sonnet/medium (top-up) |
+|---|---|---|---|---|
+| Sessions (two inquiries each) | 6 | 6 | 4 | 8 |
+| Replies valid | 12 of 12 | 12 of 12 | 8 of 8 | 16 of 16 |
+| ID references naming the entry they were given to | 372 of 372 | 377 of 377 | 256 of 256 | 509 of 509 |
+| Entries restated as new | 0 | 0 | 0 | 0 |
+| Entries dropped that nothing closed | 0 | 0 | 0 | 0 |
+| Items the grader could not place | 0 | 0 | 0 | 0 |
+| Completed objective reported `Complete` at the first inquiry | 6 of 6 | 6 of 6 | 4 of 4 | 8 of 8 |
+| and left out at the second | 6 of 6 | 6 of 6 | 4 of 4 | 6 of 8 |
+| Cancelled objective left out (replies) | 12 of 12 | 12 of 12 | 6 of 8 | 15 of 16 |
+| New objective given `null` at the first inquiry | 6 of 6 | 6 of 6 | 4 of 4 | 8 of 8 |
+| and named by its new ID at the second | 6 of 6 | 6 of 6 | 4 of 4 | 8 of 8 |
+| Rule the user lifted (replies) | left out 12 | kept under its id, new meaning 2; left out 7; replaced by a new rule 3 | kept under its id, new meaning 4; left out 2; replaced by a new rule 2 | kept under its id, new meaning 4; left out 6; replaced by a new rule 6 |
+| Rules the user never gave | 0 | 0 | 0 | 0 |
+
+Under coding v1: fable/high: wrong 0, restated as new 0, lifted rule left out 12 · haiku/low: wrong 3, restated as new 3, lifted rule kept, old meaning 2; left out 10 · sonnet/medium (registered): wrong 2, restated as new 2, lifted rule kept, old meaning 4; left out 4 · sonnet/medium (top-up): wrong 6, restated as new 6, lifted rule kept, old meaning 4; left out 12
+
+### tools-only, scenario build
+
+| | fable/high | haiku/low | sonnet/medium (registered) | sonnet/medium (top-up) |
+|---|---|---|---|---|
+| Sessions (four user turns, then one inquiry) | 6 | 6 | 4 | 8 |
+| Every stated objective recorded by its turn | 6 of 6 | 1 of 6 | 4 of 4 | 8 of 8 |
+| of these, as one entry for several objectives (amendment 2) | 0 of 6 | 1 of 6 | 4 of 4 | 8 of 8 |
+| Every rule the user gave recorded by its turn | 6 of 6 | 6 of 6 | 4 of 4 | 8 of 8 |
+| No objective recorded at all | 0 of 6 | 4 of 6 | 0 of 4 | 0 of 8 |
+| **Kept the record current** (registered rule) | 6 of 6 | 1 of 6 | 4 of 4 | 8 of 8 |
+| Final checkpoint valid | 6 of 6 | 6 of 6 | 4 of 4 | 8 of 8 |
+| Final checkpoint repeats a completion made with the tool | 0 of 6 | 0 of 6 | 0 of 4 | 0 of 8 |
+| Final checkpoint revives a retirement | 0 of 6 | 0 of 6 | 0 of 4 | 0 of 8 |
+| An arithmetic question recorded as an objective | 0 of 6 | 0 of 6 | 0 of 4 | 0 of 8 |
+| A request answered in its own turn recorded as an objective | 0 of 6 | 0 of 6 | 0 of 4 | 0 of 8 |
+| Duplicate entries | 0 of 6 | 0 of 6 | 0 of 4 | 0 of 8 |
+| Sessions with a refused call | 0 of 6 | 0 of 6 | 0 of 4 | 0 of 8 |
+| Sessions in which a built-in tool was called (blocked) | 0 of 6 | 0 of 6 | 0 of 4 | 0 of 8 |
+| `cuckoo_update` calls per session | 8 | 2 to 6 | 7 to 9 | 6 to 8 |
+| Provider requests beyond one per turn | 5 | 1 to 4 | 4 | 4 |
+
+### tools-only, scenario report (held out)
+
+| | fable/high | haiku/low | sonnet/medium (registered) | sonnet/medium (top-up) |
+|---|---|---|---|---|
+| Sessions (four user turns, then one inquiry) | 6 | 6 | 4 | 8 |
+| Every stated objective recorded by its turn | 6 of 6 | 1 of 6 | 4 of 4 | 8 of 8 |
+| of these, as one entry for several objectives (amendment 2) | 0 of 6 | 1 of 6 | 4 of 4 | 8 of 8 |
+| Every rule the user gave recorded by its turn | 6 of 6 | 6 of 6 | 4 of 4 | 8 of 8 |
+| No objective recorded at all | 0 of 6 | 4 of 6 | 0 of 4 | 0 of 8 |
+| **Kept the record current** (registered rule) | 6 of 6 | 1 of 6 | 4 of 4 | 8 of 8 |
+| Final checkpoint valid | 6 of 6 | 6 of 6 | 4 of 4 | 8 of 8 |
+| Final checkpoint repeats a completion made with the tool | 0 of 6 | 0 of 6 | 0 of 4 | 0 of 8 |
+| Final checkpoint revives a retirement | 0 of 6 | 0 of 6 | 0 of 4 | 0 of 8 |
+| An arithmetic question recorded as an objective | 0 of 6 | 0 of 6 | 0 of 4 | 0 of 8 |
+| A request answered in its own turn recorded as an objective | 6 of 6 | 0 of 6 | 2 of 4 | 2 of 8 |
+| Duplicate entries | 0 of 6 | 0 of 6 | 0 of 4 | 0 of 8 |
+| Sessions with a refused call | 0 of 6 | 0 of 6 | 0 of 4 | 0 of 8 |
+| Sessions in which a built-in tool was called (blocked) | 0 of 6 | 0 of 6 | 0 of 4 | 0 of 8 |
+| `cuckoo_update` calls per session | 6 to 7 | 1 to 3 | 4 to 5 | 4 to 6 |
+| Provider requests beyond one per turn | 4 | 1 to 3 | 4 | 4 to 5 |
+
+### tools-builtins, scenario build
+
+| | fable/high | haiku/low | sonnet/medium (registered) | sonnet/medium (top-up) |
+|---|---|---|---|---|
+| Sessions (four user turns, then one inquiry) | 6 | 6 | 4 | 8 |
+| Every stated objective recorded by its turn | 6 of 6 | 2 of 6 | 3 of 4 | 7 of 8 |
+| of these, as one entry for several objectives (amendment 2) | 0 of 6 | 2 of 6 | 3 of 4 | 7 of 8 |
+| Every rule the user gave recorded by its turn | 6 of 6 | 6 of 6 | 4 of 4 | 8 of 8 |
+| No objective recorded at all | 0 of 6 | 4 of 6 | 0 of 4 | 0 of 8 |
+| **Kept the record current** (registered rule) | 6 of 6 | 2 of 6 | 2 of 4 | 5 of 8 |
+| Final checkpoint valid | 6 of 6 | 6 of 6 | 4 of 4 | 8 of 8 |
+| Final checkpoint repeats a completion made with the tool | 0 of 6 | 0 of 6 | 1 of 4 | 2 of 8 |
+| Final checkpoint revives a retirement | 0 of 6 | 0 of 6 | 0 of 4 | 0 of 8 |
+| An arithmetic question recorded as an objective | 0 of 6 | 0 of 6 | 0 of 4 | 0 of 8 |
+| A request answered in its own turn recorded as an objective | 0 of 6 | 0 of 6 | 0 of 4 | 0 of 8 |
+| Duplicate entries | 0 of 6 | 0 of 6 | 0 of 4 | 0 of 8 |
+| Sessions with a refused call | 0 of 6 | 0 of 6 | 0 of 4 | 0 of 8 |
+| Sessions in which a built-in tool was called (blocked) | 6 of 6 | 0 of 6 | 0 of 4 | 0 of 8 |
+| `cuckoo_update` calls per session | 8 to 10 | 1 to 4 | 4 to 6 | 5 to 6 |
+| Provider requests beyond one per turn | 6 to 7 | 1 to 3 | 2 to 4 | 3 to 4 |
+
+### tools-builtins, scenario report (held out)
+
+| | fable/high | haiku/low | sonnet/medium (registered) | sonnet/medium (top-up) |
+|---|---|---|---|---|
+| Sessions (four user turns, then one inquiry) | 6 | 6 | 4 | 8 |
+| Every stated objective recorded by its turn | 6 of 6 | 0 of 6 | 0 of 4 | 0 of 8 |
+| of these, as one entry for several objectives (amendment 2) | 0 of 6 | 0 of 6 | 0 of 4 | 0 of 8 |
+| Every rule the user gave recorded by its turn | 6 of 6 | 6 of 6 | 4 of 4 | 8 of 8 |
+| No objective recorded at all | 0 of 6 | 6 of 6 | 4 of 4 | 6 of 8 |
+| **Kept the record current** (registered rule) | 6 of 6 | 0 of 6 | 0 of 4 | 0 of 8 |
+| Final checkpoint valid | 6 of 6 | 6 of 6 | 4 of 4 | 8 of 8 |
+| Final checkpoint repeats a completion made with the tool | 0 of 6 | 0 of 6 | 0 of 4 | 0 of 8 |
+| Final checkpoint revives a retirement | 0 of 6 | 0 of 6 | 0 of 4 | 0 of 8 |
+| An arithmetic question recorded as an objective | 0 of 6 | 0 of 6 | 0 of 4 | 0 of 8 |
+| A request answered in its own turn recorded as an objective | 6 of 6 | 0 of 6 | 0 of 4 | 0 of 8 |
+| Duplicate entries | 0 of 6 | 0 of 6 | 0 of 4 | 0 of 8 |
+| Sessions with a refused call | 0 of 6 | 0 of 6 | 0 of 4 | 0 of 8 |
+| Sessions in which a built-in tool was called (blocked) | 3 of 6 | 0 of 6 | 0 of 4 | 0 of 8 |
+| `cuckoo_update` calls per session | 6 to 7 | 1 | 1 | 1 to 4 |
+| Provider requests beyond one per turn | 4 | 1 | 1 | 1 to 3 |
+
+### What was read by hand
+
+- Every rule text listed under the lifted rule's ID (16 replies) and every rule given a `null` id (14): all say the
+  linter may now run without asking. Coding v2's "kept under its id, new meaning" and "replaced by a new rule" are
+  therefore what happened; no reply kept the old instruction, and no reply invented a rule.
+- Sonnet, `checkpoint-compacted`: in 3 of 12 sessions the first reply listed the cancelled objective once more, with
+  "Cancelled by the user" as its progress and no completion, and left it out at the second inquiry. The record then
+  shows it as active until that second checkpoint. In 2 of 12 the second reply reported the completed objective as
+  `Complete` again, although the request named it as already reported. Neither occurred in the `visible` variant
+  (0 of 12) or with the other subjects.
+- Tool sessions, how the record ends (not a registered outcome; counted from the final snapshots):
+
+  | | An entry of its own for each stated objective | One entry for all of them | Only some recorded | None | The cancelled item at the end |
+  |---|---|---|---|---|---|
+  | fable/high, both tool sets (24 sessions) | 24 | 0 | 0 | 0 | retired with a reason 24 |
+  | sonnet/medium, only Cuckoo's tools (24) | 0 | 24 | 0 | 0 | inside a completed entry 15, still active 8, retired 1 |
+  | sonnet/medium, built-in tools declared (24) | 0 | 14 (12 `build`, 2 `report`) | 0 | 10 (all `report`) | inside a completed entry 12, still active 2, no entry 10 |
+  | haiku/low, both tool sets (24) | 0 | 4 | 2 | 18 | inside a completed entry 4, no entry 20 |
+
+- Fable called a built-in tool in 9 of its 12 `tools-builtins` sessions, always in the first turn of a task (`ls`,
+  `find`, reading a `Makefile` or a `README.md` that the empty working directory does not have), and was told the
+  tool is unavailable. By the protocol these sessions are reported apart: all 9 recorded every objective and rule by
+  its turn, as did the 3 without such a call.
+- Fable recorded the request "propose a title" as an objective in 12 of 12 `report` sessions and left it active, with
+  "waiting for the user's choice", which the final checkpoint restated. Sonnet did so in 4 of 12 with only Cuckoo's
+  tools. No subject recorded the arithmetic question.
+
+### Reading, by the registered rules
+
+- *Protocol followed* (every reply valid, no wrong ID, no restatement as new, nothing dropped, both checkpoint cells):
+  met by all three subjects under coding v2, on 96 of 96 replies and 3011 of 3011 ID references. Under coding v1,
+  which counts a lifted rule's replacement as a restatement, haiku and sonnet do not meet it (6 and 8 items); those
+  items were read and are the replacements described above.
+- *Keeps the record current*: fable/high in 24 of 24 sessions, including the held-out scenario with both tool sets,
+  with an entry for each objective. Sonnet/medium in 24 of 24 with only Cuckoo's tools and, with the built-in tools
+  declared, in 7 of 12 (`build`) and 0 of 12 (`report`, held out); wherever it recorded objectives it kept one entry
+  for the whole request, so the rule is met in a coarser sense than for fable. Haiku/low in 4 of 24.
+  Every subject recorded every rule the user gave in its turn (72 of 72 sessions).
+- No call was refused and no final checkpoint was invalid in any session. A final checkpoint repeated a completion
+  made with the tool in 3 of 12 sonnet `tools-builtins` `build` sessions and nowhere else.
+
+What this does not show is in "Limits" below. In particular the tool cells have no work in them, and the built-in
+tools were declared but blocked.
+
 ## Running
 
 ```bash
@@ -101,6 +289,9 @@ export PI_SDK_ROOT=<pi-monorepo of the pinned Pi> GATEWAY_EXTENSION=<pi-ai-gatew
 DRY=1 ./run.sh canary <frozen copy of the extension> <out> 2 claude-fable-5-2 high tools-builtins   # no model call
 ./run.sh fable-tools-builtins <frozen copy of the extension> <out> 6 claude-fable-5-2 high tools-builtins
 node analyze.mjs <out>/fable-tools-builtins ...                                                     # rescore stored runs
+node analyze.mjs results/fable-tools-builtins.jsonl                                                 # the same, from the kept copy
+node summarize.mjs "fable/high=results/fable-tools-only.jsonl,results/fable-tools-builtins.jsonl" ...
+node export-results.mjs results <out>/<label> ...
 node --test grade.test.mjs
 ```
 

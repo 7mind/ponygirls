@@ -99,7 +99,7 @@ test('a tool session that records everything in its turn, and a final checkpoint
   assert.deepEqual(graded.rules, { length: 'by its turn, source user', tables: 'by its turn, source user' }); assert.equal(graded.allRulesByTurn, true);
   assert.deepEqual(graded.completions, { a: 'complete by its turn, complete at the end', b: 'complete by its turn, complete at the end' });
   assert.deepEqual(graded.retirements, { c: 'retired by its turn, retired at the end' });
-  assert.deepEqual([graded.updateCalls, graded.extraRequests, graded.refused, graded.blockedCalls, graded.overRecorded, graded.oneTurnRecorded, graded.duplicates], [8, 4, [], [], [], [], []]);
+  assert.deepEqual([graded.updateCalls, graded.extraRequests, graded.refused, graded.blockedCalls, graded.overRecorded, graded.oneTurnRecorded, graded.duplicates, graded.merged], [8, 4, [], [], [], [], [], []]);
   assert.deepEqual(graded.final, { completedRepeated: [], retiredRevived: [], activeDropped: [], newAtCheckpoint: [] });
 });
 
@@ -123,6 +123,15 @@ test('undesired tool sessions are named: nothing recorded, late and duplicate en
   assert.deepEqual(messy.callsPerTurn[2], ['add_objective', 'retire AO9 (REFUSED)']);
   assert.deepEqual(messy.final, { completedRepeated: ['AO1'], retiredRevived: [], activeDropped: ['AO2', 'AO4', 'AO5', 'AR1'], newAtCheckpoint: [] });
   assert.deepEqual(gradeTools(toolSession([{ calls: [], after: { objectives: [], rules: [] } }], 'Error: Expected rules'), build).final, { invalid: 'Error: Expected rules' });
+  // Amendment 2: three requested items kept as one entry, and two rules as one.
+  const whole = entry('AO1', 'Deliver three items: (a) a Bazel migration outline, (b) an onboarding note, (c) a CI checklist');
+  const bothRules = sessionRule('AR1', 'Answers under 120 words and no tables');
+  const merged = gradeTools(toolSession([{ calls: [call({ action: 'add_objective' })], after: { objectives: [whole], rules: [] } }, { calls: [call({ action: 'add_rule' })], after: { objectives: [whole], rules: [bothRules] } },
+    { calls: [], after: { objectives: [whole], rules: [bothRules] } }, { calls: [call({ action: 'complete', id: 'AO1' })], after: { objectives: [{ ...whole, status: 'complete' }], rules: [bothRules] } }], { objectives: [], rules: [{ id: 'AR1', rule: bothRules.rule, source: 'user', scope: 's' }] }), build);
+  assert.deepEqual(merged.merged, ['AO1: objectives a+b+c', 'AR1: rules length+tables']);
+  assert.equal(merged.allObjectivesByTurn, true, 'the merged entry still satisfies the first reading'); assert.deepEqual(merged.duplicates, []);
+  assert.deepEqual(merged.retirements, { c: 'complete by its turn, complete at the end' }, 'the cancelled item ends inside a completed entry, not retired');
+  assert.deepEqual(merged.completions, { a: 'active by its turn, complete at the end', b: 'complete by its turn, complete at the end' });
   const title = gradeTools(toolSession([{ calls: [], after: { objectives: [entry('AO1', 'Propose a title for the report')], rules: [] } }], { objectives: [], rules: [] }), TOOL_SCENARIOS[1]);
   assert.deepEqual(title.oneTurnRecorded, ['AO1 active: Propose a title for the report']); assert.deepEqual(title.overRecorded, []);
 });

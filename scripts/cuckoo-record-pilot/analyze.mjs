@@ -1,17 +1,15 @@
-// Rescore stored pilot runs. Usage: node analyze.mjs RESULTS_DIR/LABEL [...]
-// Never reruns anything: it reads result.json of every session under each directory and prints one line per session,
-// then per-cell totals. Checkpoint sessions are graded under both codings (see grade.mjs); totals name their coding.
-import { existsSync, readFileSync, readdirSync } from 'node:fs';
-import { join } from 'node:path';
+// Rescore stored pilot runs. Usage: node analyze.mjs RESULTS_DIR/LABEL | results/LABEL.jsonl [...]
+// Never reruns anything: it reads every stored session and prints one line per session, then per-cell totals.
+// Checkpoint sessions are graded under both codings (see grade.mjs); totals name their coding.
 import { TOOL_SCENARIOS } from './scenarios.mjs';
 import { gradeCheckpoint, gradeTools } from './grade.mjs';
+import { loadResults } from './results.mjs';
 
 const count = (map, key) => map.set(key, (map.get(key) ?? 0) + 1);
 const spread = map => [...map].sort().map(([key, value]) => `${key} ${value}`).join(', ');
 
 for (const directory of process.argv.slice(2)) {
-  const names = readdirSync(directory).filter(name => existsSync(join(directory, name, 'result.json'))).sort();
-  const results = names.map(name => JSON.parse(readFileSync(join(directory, name, 'result.json'), 'utf8')));
+  const results = loadResults(directory);
   console.log(`\n# ${directory}: ${results.length} sessions, ${results.filter(item => item.status === 'completed').length} completed${results[0] === undefined ? '' : ` · ${results[0].model}/${results[0].thinking}`}`);
   const profiles = new Set(results.flatMap(item => item.profile === undefined ? [] : [`${item.profile.systemSha256.slice(0, 12)}/${item.profile.toolsSha256.slice(0, 12)}`]));
   if (profiles.size > 0) console.log(`model-facing profile (system text with the cwd normalised / tool definitions): ${[...profiles].join(' ; ')}${profiles.size === 1 ? '' : '  <-- NOT IDENTICAL ACROSS RUNS'}`);
@@ -50,12 +48,12 @@ for (const directory of process.argv.slice(2)) {
     for (const { result, grade } of graded) {
       console.log(`${result.id}: objectives ${JSON.stringify(grade.objectives)} · rules ${JSON.stringify(grade.rules)} · completions ${JSON.stringify(grade.completions)} · retirements ${JSON.stringify(grade.retirements)}`);
       console.log(`   calls ${JSON.stringify(grade.callsPerTurn)} · update ${grade.updateCalls} · recall ${grade.recallCalls} · extra requests ${grade.extraRequests} · refused ${grade.refused.length} · blocked built-in calls ${JSON.stringify(grade.blockedCalls)}`);
-      console.log(`   over-recorded ${JSON.stringify(grade.overRecorded)} · one-turn request recorded ${JSON.stringify(grade.oneTurnRecorded)} · other entries ${JSON.stringify(grade.otherEntries ?? [])} · duplicates ${JSON.stringify(grade.duplicates)} · final ${JSON.stringify(grade.final)}`);
+      console.log(`   over-recorded ${JSON.stringify(grade.overRecorded)} · one-turn request recorded ${JSON.stringify(grade.oneTurnRecorded)} · other entries ${JSON.stringify(grade.otherEntries ?? [])} · duplicates ${JSON.stringify(grade.duplicates)} · merged ${JSON.stringify(grade.merged)} · final ${JSON.stringify(grade.final)}`);
     }
     const n = graded.length; const sum = pick => graded.filter(pick).length;
     console.log(`TOTAL tools, scenario ${scenario.id}${scenario.heldOut ? ' (held out)' : ''}, n=${n}: every objective by its turn ${sum(item => item.grade.allObjectivesByTurn)} · every rule by its turn ${sum(item => item.grade.allRulesByTurn)}` +
       ` · no objective at all ${sum(item => Object.values(item.grade.objectives).every(value => value === 'never'))} · over-recorded ${sum(item => item.grade.overRecorded.length > 0)} · one-turn request recorded ${sum(item => item.grade.oneTurnRecorded.length > 0)}` +
-      ` · duplicates ${sum(item => item.grade.duplicates.length > 0)} · refused calls ${sum(item => item.grade.refused.length > 0)} · blocked built-in calls ${sum(item => item.grade.blockedCalls.length > 0)}` +
+      ` · duplicates ${sum(item => item.grade.duplicates.length > 0)} · merged entries ${sum(item => item.grade.merged.length > 0)} · refused calls ${sum(item => item.grade.refused.length > 0)} · blocked built-in calls ${sum(item => item.grade.blockedCalls.length > 0)}` +
       ` · final valid ${sum(item => item.grade.final !== null && item.grade.final.invalid === undefined)} · final repeats a completion ${sum(item => item.grade.final?.completedRepeated?.length > 0)} · final revives a retirement ${sum(item => item.grade.final?.retiredRevived?.length > 0)}` +
       ` · update calls ${graded.map(item => item.grade.updateCalls).join('/')} · extra requests ${graded.map(item => item.grade.extraRequests).join('/')}`);
   }

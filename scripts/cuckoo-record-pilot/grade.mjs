@@ -95,7 +95,7 @@ export function gradeTools(result, scenario) {
     updateCalls: updates.flat().length, refused: updates.flat().filter(call => call.result !== null && call.result.isError).map(call => call.result.text.slice(0, 120)),
     recallCalls: result.turns.flatMap(turn => turn.calls).filter(call => call.name === 'cuckoo_recall').length,
     blockedCalls: (result.blockedCalls ?? []).map(call => call.name), extraRequests: result.requests - (result.turns.length + 1),
-    objectives: {}, rules: {}, completions: {}, retirements: {}, overRecorded: [], oneTurnRecorded: [], duplicates: [], final: null,
+    objectives: {}, rules: {}, completions: {}, retirements: {}, overRecorded: [], oneTurnRecorded: [], duplicates: [], merged: [], final: null,
   };
   for (const name of scenario.expect.added) {
     const turn = firstTurn(snapshot => objectivesOf(snapshot, scenario.objectives[name]).length > 0);
@@ -117,6 +117,10 @@ export function gradeTools(result, scenario) {
     out.otherEntries = others.filter(item => !(scenario.overRecording !== null && scenario.overRecording.test(item.objective)) && !(scenario.oneTurnRequest !== null && scenario.oneTurnRequest.test(item.objective))).map(item => `${item.id}: ${item.objective.slice(0, 50)}`);
     for (const [name, key] of Object.entries(scenario.objectives)) { const found = objectivesOf(last, key); if (found.length > 1) out.duplicates.push(`${name}: ${found.map(item => item.id).join(',')}`); }
     for (const [name, key] of Object.entries(scenario.rules)) { const found = rulesOf(last, key); if (found.length > 1) out.duplicates.push(`${name}: ${found.map(item => item.id).join(',')}`); }
+    // Amendment 2: one entry that carries several of the stated objectives (or rules). Such an entry satisfies
+    // "recorded by its turn" for each of them, so it is reported beside that reading, not instead of it.
+    for (const item of last.objectives) { const names = Object.entries(scenario.objectives).filter(([, key]) => key.test(item.objective)).map(([name]) => name); if (names.length > 1) out.merged.push(`${item.id}: objectives ${names.join('+')}`); }
+    for (const item of last.rules) { const names = Object.entries(scenario.rules).filter(([, key]) => key.test(`${item.rule} ${item.scope}`)).map(([name]) => name); if (names.length > 1) out.merged.push(`${item.id}: rules ${names.join('+')}`); }
   }
   out.allObjectivesByTurn = Object.values(out.objectives).every(value => value === 'by its turn');
   out.allRulesByTurn = Object.values(out.rules).every(value => value.startsWith('by its turn'));
