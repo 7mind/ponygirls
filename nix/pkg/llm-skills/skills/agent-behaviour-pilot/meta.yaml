@@ -1,0 +1,15 @@
+name: agent-behaviour-pilot
+description: >-
+  Design, run, score or amend a controlled behavioural experiment whose subject
+  is a tool-using coding agent: fixture workspaces run under two or more
+  conditions and scored mechanically from the final workspace, report and
+  session log. Use when asked whether an instruction, skill, policy or fixture
+  changes what a coding agent does, to pilot or reproduce a reported agent
+  failure in a fixture, to rescore such runs, or when editing shipped
+  model-facing text (system-prompt section, injected message, skill or
+  AGENTS.md rule) and supporting the edit with live runs. Covers verified
+  subject isolation, in-subject environment canaries, oracles the subject can
+  neither read nor write, scorer validation and manipulation checks. Not for
+  established benchmark harnesses, interactive UI checks (tui-testing),
+  tool-less model evaluation outside an agent harness, a single exploratory run
+  nobody will cite, or pilots with human participants.
