@@ -1,6 +1,6 @@
 # Account HTTP code: one shared implementation for Haystack, Manure and Chronicle
 
-Status: stages 1 and 2 done and reviewed; stage 3 done, under review; stages 4 and 5 and three fixes follow. This file records the work for a reader
+Status: stages 1 and 2 on `main`; stage 3 done, reviewed, review round done; stages 4 and 5 and three fixes follow. This file records the work for a reader
 who has not seen the plan it condenses (`account-glue-dedup.md`, a survey kept outside the repository).
 
 ## What the work is and why
@@ -281,6 +281,83 @@ requirement, disable, reset) and role, enabled or display-name changes reach the
 their target, and declared changes through its own reload; a dedicated hook would need a new `AccountPlaneSettings`
 field, which the stage-2 suite constructs. The per-client login limit is fix 1.
 
+## Stage 3 review round
+
+An advisory review (7 findings, 3 advisories) was accepted in full by the owner, with these rulings. **Stop rule:** it
+protects Haystack's, Manure's and Chronicle's behaviour as their tests pinned it before this refactor; the suites the
+refactor wrote (stages 1 to 3) may get a new argument at a construction site when a settings type gains a member, with
+no assertion changed; the package-private five-argument constructor kept for the stage-2 suite is removed.
+
+What changed, item by item (each test first; the failing run is below):
+
+1. *haystack-extra-reads.* What a service learns of a caller beyond the credential is `ServiceCallerSettings.reads:
+   CallerReads[C]`, no default: `CredentialOnly` (`Captured`, exactly the reads of `resolve`) or `WithAdministrator`
+   (`Identified`). Haystack names `CredentialOnly`; `ServiceCallers` became `ServiceCallers[S, C]`. New Haystack test
+   `HttpAccountReadsTest`: a JDBC driver registered ahead of PostgreSQL's records every statement; one `whoami` by an
+   imperative user's browser session makes exactly two statements on the shared tables (the imperative accounts of the
+   merged directory, the session by digest). It failed on `e79a5b54` (a third: the imperative row by id) and passed on
+   `58c40b55`'s code and on the new code.
+2. *ambiguous-domain-transport.* `ServiceCallerSettings.ambiguity: RequestAmbiguity`, no default:
+   `FirstHostClassCookie` (Haystack's present rule; its `version` counts `Host` headers itself) or `OneHostAnyCookie`
+   (exactly one `Host`, `AmbiguousHost`; a bearer beside a session cookie of either name, `AmbiguousCredentials`).
+3. *stale-declared-admin.* `identify` and `standing` judge a credential looked up in a transaction against the
+   configuration read inside the transaction's callback. Gated test: the demotion (and a re-promotion) is published by a
+   probe that runs after the check started and before its transaction. Haystack's path (`resolve`) is unchanged; its
+   count test is unchanged.
+4. *missing-live-hooks.* `DeclarativeAccountService` takes `lifecycle: AccountLifecycle`, no default: `Unobserved`
+   (Haystack: its plane's `endSession` by secret keeps its behaviour) or `Observed(credentialEnded, accountChanged)`,
+   told after the commit, never after a rollback: a session's id at sign-out and when a sign-in replaced it (declared,
+   imperative, sign-up, redemption, recovery, password change), an issued token's id at revocation; an account's id
+   when the dispatcher committed a disable or enable, a role change, a password change or recovery, a reset redemption
+   or a TOTP-requirement change, when a reload changed or removed its declared entry or administrator flag (compared with
+   the configuration installed before), and for every active imperative account when a reload turned the master switch
+   off. Sessions revoked in bulk are told through their account. Tests from real operations through the consumer
+   (declared and imperative sign-ins, a password change, promotion, disable, reloads; sign-up, redemption and recovery
+   with a replaced cookie take the same reply path, not tested),
+   including a rolled-back sign-out and revocation (nothing told, credentials still valid) and a refused reload.
+5. *disabled-configured-secret.* `ConfiguredTokens.configures(secret)`: membership over every declared user's digests,
+   enabled or not, shared or not (per check: the files as they are now). `Refused` uses it. Cases: a disabled owner's
+   retained digest (snapshot and per check), a digest two tokens share after the load (per check), and a person whose
+   password is a disabled owner's token through the consumer.
+6. *distinguishable-declared-refusal.* With `Refused`, every canonical candidate password is looked up (configured,
+   then live issued), whatever the outcome; a refused one is replaced by a fresh 256-bit random secret before
+   `loginReplacing`, so it fails inside the verification, on the wrong password's path and with its failure, before any
+   lock or session write. The imperative core's verification does the same. `PostgresDeclaredRefusalSuite` counts
+   session-table writes with a trigger into a sequence (a rollback does not undo it) while another connection holds the
+   owner's lock: both a refused and a wrong password answer `unauthorized` with no write and no lock attempt; a control
+   sign-in counts its two writes. The consumer case compares the two answers byte for byte.
+7. *unusable-new-password.* With `Refused`, a new password that is a bearer secret (sign-up, redemption, recovery,
+   password change) is `weak-password` (`400`, the plane's existing failure for an unacceptable password) before it is
+   hashed; the operation's transaction rolls back. Cases: a refused sign-up creates no account; a refused change keeps
+   the old password and both sessions and tells nothing. Redemption and recovery hash on the same path; not tested.
+   `Accepted` (Haystack) unchanged.
+8. *test-secret-diagnostics.* The stage-3 suites compare cookies with a fixed message and report the redaction test's
+   failing type and field only.
+9. *consumer-reload-example.* The test consumer publishes a reload's result, a failure included (Haystack's pattern);
+   one case shows every request refused (`503`) while the failure is published, another the return to a valid
+   configuration and that the refused installation wrote nothing.
+10. *retry-after-doc.* The README states that Blabber's contract requires `Retry-After` on every `429` and that a
+    guard's `429` lacks it until fix 1.
+
+**Edits to suites of stages 1 to 3.** `AccountPlaneContract.scala` (stage 2): the service construction gets
+`BearerSecretPasswords.Accepted, DeclaredInstallation.Reconciled, AccountLifecycle.Unobserved`; nothing else.
+`ServiceCallersContract.scala` (stage 3): construction of the service and the callers (new settings members), the probe
+storage and the published configuration; assertions changed only where items 7 to 9 require: the cookie comparisons and
+the redaction clue (same conditions, sanitised messages), the password test's imperative case (a token secret can no
+longer be set as a password under `Refused`: the configuration now declares a token with the password's digest
+afterwards), and the installation test (split in two: refusals while the failure is published; the return to a valid
+configuration). No test that existed before the refactor changed.
+
+**Failing first.** With each new rule disabled in one run (no strict ambiguity, the selected configuration in the
+callback, nothing told, membership as authentication, the stage-3 declared path, new passwords unchecked), 6 consumer
+cases failed on each backend, `PostgresDeclaredRefusalSuite` failed with PostgreSQL's lock timeout, and the three
+`ConfiguredSecretsSuite` cases failed; the strict-ambiguity case failed in a run of its own (the first mutation did not
+disable it). Each at the assertion of its rule.
+
+**Verification (inner loop).** Shared: 27 suites, 258 cases, PostgreSQL cases executed, no skip. Haystack JVM: 43
+suites, 766 cases (the new `HttpAccountReadsTest`; the 765 before unchanged). `manureServer` and `chronicleServer`
+`Test/compile` pass. Not run: `scripts/verify`, native, browser, VM.
+
 ## Recorded, not fixed
 
 Each item was noticed and deliberately left. "Read" means read from the code; "reproduced" means a test or run
@@ -331,15 +408,20 @@ showed it.
   not reproduced.
 - A `429` that a `LoginAdmission.Guarded` guard raises carries no `Retry-After` (the plane's login path is not a
   dispatched route); Blabber's contract requires it on every `429`. For fix 1. Read.
-- `BearerSecretPasswords.Refused` covers verification, not setting: signup, redemption and a password change accept a
-  bearer secret as the new password, which then never verifies. A disabled user's configured token is not looked at
-  (`ConfiguredTokens.authenticate` covers enabled users' tokens only). Read.
-- Haystack's identification now also reads the effective administrator flag it does not use: for an imperative user
-  with the master switch on, one primary-key read of the imperative row per identification. Read.
 - `ServiceCallers` repeats the actor pattern of `AccountJson.requireActor` (with typed refusals instead of its
   `AccountFailure` codes); the service's `authenticate` and `identified` repeat the configured, issued and browser
   branching, kept apart so that the account plane's resolution does exactly what it did. Read.
-- The stage-2 constructor of `DeclarativeAccountService` remains as a package-private secondary constructor only for the
-  stage-2 suites. Read.
 - `PostgresServiceCallersSuite` creates the test table `consumer_declared_ids` in the owned database and empties it; it
   does not drop it. Read.
+- The stage-2 suite `AccountPlaneContract` has assertions whose failure text can print a session secret (its comparison
+  of ended sessions, its cookie comparisons, its redaction clue); only its construction site may change. Read.
+- A refused bearer-secret password is verified as a fresh random secret: it would verify against a stored hash with
+  probability 2^-256. The wrong-password path still rolls back its read-only transaction, as before; no written work is
+  rolled back on either path. Read.
+- A lifecycle notification that fails after its commit fails the operation's answer although the commit stands, as
+  Haystack's `endSession` does. With `Observed`, an imperative sign-in looks up the presented cookie once more to name
+  the session it replaces. Sessions revoked in bulk are told by account, not by id. A configured token removed or
+  rotated by a reload is not told (bearer requests are checked on every request and wake). Read.
+- `HttpAccountReadsTest` re-registers PostgreSQL's JDBC driver behind its recorder in the JVM-wide `DriverManager` for
+  the test; Haystack's suites run in sbt's JVM, one at a time. `PostgresDeclaredRefusalSuite` waits for PostgreSQL's
+  200 ms `lock_timeout` only when the owner's lock is attempted, which the code under test must not do. Read.
