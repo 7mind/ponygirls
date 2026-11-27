@@ -147,13 +147,26 @@ test("hints are worded for both answers and left out when unstated", () => {
 
 test("a change of the active set is reported with what happens next", () => {
   const issue = mcpTool("linear", "save_issue", {});
-  const entry = entryOf(issue, { active: [issue.name] });
-  assert.deepEqual(activationNotice({ kind: "loaded", entry }), {
-    text: `Loaded mcp__linear__save_issue: declared to the model from the next request (${tokenText(entry.cost.declaration)} tok).`, state: "ok",
+  const loaded = entryOf(issue, { active: [issue.name] });
+  assert.deepEqual(activationNotice({ kind: "loaded", entry: loaded }), {
+    text: `Loaded mcp__linear__save_issue: declared to the model from the next request (${tokenText(loaded.cost.declaration)} tok).`, state: "ok",
   });
-  assert.deepEqual(activationNotice({ kind: "unloaded", entry }), {
+  const unloaded = entryOf(issue, { declared: declared([issue]) });
+  assert.deepEqual(activationNotice({ kind: "unloaded", entry: unloaded }), {
     text: "Unloaded mcp__linear__save_issue: dropped from the declarations with the next request.", state: "ok",
   });
+});
+
+test("a change the model never sees is reported as such", () => {
+  const issue = mcpTool("linear", "save_issue", {});
+  // Unloaded and loaded again between two requests: the transcript declared it all along.
+  const reloaded = entryOf(issue, { active: [issue.name], declared: declared([issue]) });
+  assert.equal(activationNotice({ kind: "loaded", entry: reloaded }).text, `Loaded mcp__linear__save_issue: still declared to the model (${tokenText(reloaded.cost.declaration)} tok).`);
+  // Loaded and unloaded again between two requests: it was never declared.
+  const neverDeclared = entryOf(issue, {});
+  assert.equal(activationNotice({ kind: "unloaded", entry: neverDeclared }).text, "Unloaded mcp__linear__save_issue: it had not been declared to the model yet.");
+  const withheld = entryOf(issue, { active: [issue.name], withheld: [issue.name] });
+  assert.equal(activationNotice({ kind: "loaded", entry: withheld }).text, "Loaded mcp__linear__save_issue: active, but another tool keeps its declaration out of requests.");
 });
 
 test("a refusal says what stood in the way", () => {

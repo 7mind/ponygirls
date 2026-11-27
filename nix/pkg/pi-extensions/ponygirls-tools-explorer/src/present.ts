@@ -150,13 +150,21 @@ const REFUSAL_TEXT: Readonly<Record<Refusal, (name: string) => string>> = {
   "not-deactivated": (name) => `pi kept ${name} active.`,
 };
 
+/** What the change means for the model: nothing, when it happened and was undone between two requests. */
+function outcome(result: Exclude<ActivationResult, { kind: "refused" }>): string {
+  const { entry } = result;
+  if (result.kind === "unloaded") {
+    return entry.delivery === "removal-pending" ? "dropped from the declarations with the next request" : "it had not been declared to the model yet";
+  }
+  if (entry.delivery === "withheld") return "active, but another tool keeps its declaration out of requests";
+  const cost = `(${tokenText(totalTokens(entry.cost))} tok)`;
+  return entry.delivery === "declared" ? `still declared to the model ${cost}` : `declared to the model from the next request ${cost}`;
+}
+
 export function activationNotice(result: ActivationResult): Notice {
   if (result.kind === "refused") return { text: REFUSAL_TEXT[result.reason](displayLine(result.name)), state: "attention" };
-  const name = displayLine(result.entry.name);
-  if (result.kind === "loaded") {
-    return { text: `Loaded ${name}: declared to the model from the next request (${tokenText(totalTokens(result.entry.cost))} tok).`, state: "ok" };
-  }
-  return { text: `Unloaded ${name}: dropped from the declarations with the next request.`, state: "ok" };
+  const verb = result.kind === "loaded" ? "Loaded" : "Unloaded";
+  return { text: `${verb} ${displayLine(result.entry.name)}: ${outcome(result)}.`, state: "ok" };
 }
 
 /** `~11.8k tok active` and, with a model, `1.2% of 1M`. */
